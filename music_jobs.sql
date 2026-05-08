@@ -154,3 +154,99 @@ WHERE payload ? 'publisher';
  019e0964-b044-748b-9c43-accc7de06c89 | buruboun-garada.mp3
 (1 row)
 */
+
+/* ====================================================================================
+STEP 2 - public_id
+==================================================================================== */
+
+-- Note that PostgreSQL automatically creates an index for a field with the UNIQUE constraint.
+ALTER TABLE music_jobs ADD COLUMN public_id UUID UNIQUE NOT NULL DEFAULT uuidv4();
+
+-- QUESTIONS/ANSWERS --
+
+/* 1. Why does this column use uuidv4() and not uuidv7()?
+As uuidv7 has the timestamp embedded, it can potentially be a security concern if it was
+used for the public_id field. In this case, when a job was created could be used by an 
+attacker to analyze traffic. Determining the average number of jobs being created could be
+useful to a competitor, or even maliciously used in configuring a DDOS attack. Using uuidv4()
+is better for the public_id field since it does not embed a timestamp.
+*/
+
+/* 2. What does uuid_extract_timestamp() reveal about uuidv7?
+The PostgreSQL uuid_extract)timestamp function reveals when the UUID was generated. This is 
+a security concern as discussed in Question 1.
+*/
+
+/* 3. WHy does the UNIQUE constraint make CREATE INDEX unnecessary?
+When a field has the UNIQUE constraint, PostgreSQL automatically creates a unique B-Tree
+index for it. The same occurs for primary keys and EXCLUSION constraints.
+*/
+
+/* 4. What is the two-ID pattern and why does it matter?
+The two-ID pattern involves using two different identifiers for one record. Usually, one
+is internal and the other is public. It matters because it allows us to take advantage of
+both the better indexing performance offered by an id that can be ordered like uuidv7 and 
+the obfuscation of metadata offered by another id that is truly random like uuidv4. 
+*/
+
+-- VERIFICATION QUERIES --
+
+/* 1. Show id vs public_id side by side - what do you notice?
+SELECT id, public_id FROM music_jobs;
+
+                  id                  |              public_id               
+--------------------------------------+--------------------------------------
+ 019e0964-b043-71e1-a637-fa9fb4723d5b | 48182626-ea3f-48e7-9235-eec18916d77d
+ 019e0964-b044-7439-a140-9dfe8f09e9d2 | 0eed9e62-98f5-47aa-8ec9-6ca691969be2
+ 019e0964-b044-748b-9c43-accc7de06c89 | 4f40c13e-2ad1-4fb6-995e-4c1db3232d9a
+(3 rows)
+
+From the results, you can notice how in the id field, which is using uuidv7, the first
+part is the exact same, with the second and third parts quite similar. This probably 
+corresponds to the timestamp that is embedded. There is no common or similar pattern seen 
+in the public_id field.
+*/
+
+/* 2. Run uuid_extract_timestamp() on both columns - what does this prove?
+SELECT uuid_extract_timestamp(id) AS id_timestamp, uuid_extract_timestamp(public_id) AS public_id_timestamp FROM music_jobs;
+
+        id_timestamp        | public_id_timestamp 
+----------------------------+---------------------
+ 2026-05-08 15:00:54.211-06 | [null]
+ 2026-05-08 15:00:54.212-06 | [null]
+ 2026-05-08 15:00:54.212-06 | [null]
+(3 rows)
+
+This proves that uuidv7 has a timestamp component and that uuidv4 does not.
+*/
+
+/* 3. Show what the Go server would return to the client after insert.
+HTTP/2 202 
+date: Fri, 08 May 2026 23:35:31 GMT
+content-type: application/json
+content-length: 56
+{
+    "job_id": "48182626-ea3f-48e7-9235-eec18916d77d"
+}
+
+After insert, the server would return a JSON response with the job_id, which is the 
+public_id field internally. The client would use this id to poll the status of the job. 
+Most notable is the 202 HTTP status code, which means the request was received and 
+accepted for processing, but the processing has not yet been completed.
+*/
+
+/* 4. Show what the Go server would do when the client polls.
+HTTP/2 200 
+date: Fri, 08 May 2026 23:36:30 GMT
+content-type: application/json
+content-length: 50
+{
+    "status": "processing",
+    "progress": 25
+}
+
+When the client polls for the particular job using the job_id or public_id, the server would 
+return a JSON response with the status and progress of the job. The HTTP status code is 200 
+for OK, and the client would use the response to check the overall job. Note that these
+fields are added in STEP 3.
+*/
