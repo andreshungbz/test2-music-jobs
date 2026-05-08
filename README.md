@@ -4,7 +4,7 @@
 
 {pending}
 
-## Music Jobs
+## PostgreSQL Job Queue - Music Jobs
 
 | Key               | Value                                          |
 | ----------------- | ---------------------------------------------- |
@@ -12,3 +12,11 @@
 | **Student Email** | 2018118240@ub.edu.bz                           |
 | **Course**        | CMPS3162 - Advanced Databases                  |
 | **Due Date**      | May 14, 2026                                   |
+
+## Database Setup
+
+```
+CREATE role music_user WITH LOGIN PASSWORD 'music_password';
+CREATE DATABASE music_processing;
+ALTER DATABASE music_processing OWNER TO music_user;
+```
