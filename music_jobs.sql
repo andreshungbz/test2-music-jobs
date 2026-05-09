@@ -345,7 +345,7 @@ ERROR:  new row for relation "music_jobs" violates check constraint "music_jobs_
 DETAIL:  Failing row contains (019e0a23-050b-7cd0-9091-c81ce85f694c, {"year": 2015, "album": "Garifuna Nuguya", "genre": "Worldwide",..., 2026-05-08 18:28:47.747185-06, d43440f1-da73-412f-960b-017b25c79928, done, 150).
 */
 
--- VERIFICATION QUERIES
+-- VERIFICATION QUERIES --
 
 -- update the second record to be processing so that we have a processing job for Query 1.
 UPDATE music_jobs
@@ -404,4 +404,200 @@ ORDER BY created_at;
 
 Note that additional fields are shown and the result was ordered to more clearly show 
 the results of the UPDATE queries from before.
+*/
+
+/* ====================================================================================
+STEP 4 - result, error_msg
+==================================================================================== */
+
+ALTER TABLE music_jobs
+    ADD COLUMN result JSONB NOT NULL DEFAULT '{}',
+    ADD COLUMN error_msg TEXT;
+
+-- QUESTIONS/ANSWERS
+
+/* 1. Why does the result default to '{}' and not NULL?
+Using an empty object '{}' is preferable to NULL since it keeps a consistent JSON structure 
+where JSON operation can be safely performed without NULL checks. It can be logically 
+interpreted as having no result data yet, rather than unknown as NULL could imply.
+*/
+
+/* 2. Why is error_msg TEXT and not inside the result JSONB?
+Likewise with the status and progress fields, the error_msg field is part of the job 
+lifecycle does not particularly relate to metadata of a music file or its result. 
+Using the TEXT type provides a simple and consistent structure for error messages.
+*/
+
+/* 3. What does the || operator do to a JSONB object?
+It is the merge operator, taking the operand on the right-hand side, and merging it 
+with the operand on the left-hand side. If a key does not exist on the left-hand 
+JSONB object, a new one is created. If a key already exists, the value is overwritten.
+*/
+
+/* 4. Why does each stage read from the original file, not the previous stage's output?
+Of the four stages: Normalize, Trim silence, Convert, and Waveform, the original file 
+is read instead of using the previous stage's output so that the result of one stage 
+is not reflected in another stage. Having the stages be independent has the advantages 
+of being able to be processed in parallel and more consistent results. Errors or artifacts 
+aren't carried over across stages. For example, adjusting the volume in the Normalize 
+stage would affect the generated waveform for the Waveform stage. 
+*/
+
+-- SAMPLE DATA --
+-- Simulating stages for the oldest job.
+
+UPDATE music_jobs
+SET status = 'processing', progress = 25,
+result = result || jsonb_build_object(
+    'normalized_path', 'uploads/processed/normalized_' || md5(payload->>'title') || '.wav'
+)
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+/*
+SELECT  payload->>'title' AS title, status, progress, result
+FROM music_jobs
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+ title  |   status   | progress |                                          result                                          
+--------+------------+----------+------------------------------------------------------------------------------------------
+ Hiruga | processing |       25 | {"normalized_path": "uploads/processed/normalized_12a1b35871580a987e3ed5c049ef784b.wav"}
+(1 row)
+*/
+
+UPDATE music_jobs
+SET progress = 50,
+result = result || jsonb_build_object(
+    'trimmed_path', 'uploads/processed/trimmed_' || md5(payload->>'title') || '.wav'
+)
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+/*
+SELECT  payload->>'title' AS title, status, progress, result
+FROM music_jobs
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+ title  |   status   | progress |                                                                                   result                                                                                   
+--------+------------+----------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Hiruga | processing |       50 | {"trimmed_path": "uploads/processed/trimmed_12a1b35871580a987e3ed5c049ef784b.wav", "normalized_path": "uploads/processed/normalized_12a1b35871580a987e3ed5c049ef784b.wav"}
+(1 row)
+*/
+
+UPDATE music_jobs
+SET progress = 75,
+result = result || jsonb_build_object(
+    'converted_path', 'uploads/processed/converted_' || md5(payload->>'title') || '.mp3'
+)
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+/*
+SELECT  payload->>'title' AS title, status, progress, result
+FROM music_jobs
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+ title  |   status   | progress |                                                                                                                              result                                                                                                                              
+--------+------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Hiruga | processing |       75 | {"trimmed_path": "uploads/processed/trimmed_12a1b35871580a987e3ed5c049ef784b.wav", "converted_path": "uploads/processed/converted_12a1b35871580a987e3ed5c049ef784b.mp3", "normalized_path": "uploads/processed/normalized_12a1b35871580a987e3ed5c049ef784b.wav"}
+(1 row)
+*/
+
+UPDATE music_jobs
+SET status = 'done', progress = 100,
+result = result || jsonb_build_object(
+    'waveform_path', 'uploads/processed/waveform_' || md5(payload->>'title') || '.json'
+)
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+/*
+SELECT  payload->>'title' AS title, status, progress, result
+FROM music_jobs
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+ title  | status | progress |                                                                                                                                                                        result                                                                                                                                                                         
+--------+--------+----------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Hiruga | done   |      100 | {"trimmed_path": "uploads/processed/trimmed_12a1b35871580a987e3ed5c049ef784b.wav", "waveform_path": "uploads/processed/waveform_12a1b35871580a987e3ed5c049ef784b.json", "converted_path": "uploads/processed/converted_12a1b35871580a987e3ed5c049ef784b.mp3", "normalized_path": "uploads/processed/normalized_12a1b35871580a987e3ed5c049ef784b.wav"}
+(1 row)
+*/
+
+-- Simulating failure for the third oldest job
+UPDATE music_jobs
+SET status = 'failed', progress = 0
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 2 LIMIT 1);
+
+/*
+SELECT  payload->>'title' AS title, status, progress, result
+FROM music_jobs
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 2 LIMIT 1);
+
+      title      | status | progress | result 
+-----------------+--------+----------+--------
+ Buruboun Garada | failed |        0 | {}
+(1 row)
+*/
+
+-- VERIFICATION QUERIES --
+
+/* 1. What does the client see when polling a completed job?
+HTTP/2 200 
+date: Sat, 09 May 2026 17:22:58 GMT
+content-type: application/json
+content-length: 439
+{
+    "status": "done",
+    "progress": 100,
+    "result": {
+        "trimmed_path": "uploads/processed/trimmed_12a1b35871580a987e3ed5c049ef784b.wav",
+        "waveform_path": "uploads/processed/waveform_12a1b35871580a987e3ed5c049ef784b.json",
+        "converted_path": "uploads/processed/converted_12a1b35871580a987e3ed5c049ef784b.mp3",
+        "normalized_path": "uploads/processed/normalized_12a1b35871580a987e3ed5c049ef784b.wav"
+    }
+}
+*/
+
+-- Update second oldest job for Query 2
+UPDATE music_jobs
+SET status = 'processing', progress = 25,
+result = result || jsonb_build_object(
+    'normalized_path', 'uploads/processed/normalized_' || md5(payload->>'title') || '.mp3'
+)
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
+
+/* 2. What does the client see mid-processing (partial result)?
+HTTP/2 200 
+date: Sat, 09 May 2026 17:25:58 GMT
+content-type: application/json
+content-length: 439
+{
+    "status": "processing",
+    "progress": 25,
+    "result": {
+        "normalized_path": "uploads/processed/normalized_0f5de708d2f6808ffb0c3893b2b8964a.mp3"
+    }
+}
+
+Note that in this case, it is assumed that each stage is an independent component 
+of the result which the client can download, and that are readily available despite the 
+overall status being processing.
+*/
+
+/* 3. How do you find all failed jobs?
+SELECT id, payload->>'title' AS title, status, progress
+FROM music_jobs
+WHERE status = 'failed';
+
+                  id                  |      title      | status | progress 
+--------------------------------------+-----------------+--------+----------
+ 019e0a23-0ce8-79e0-a6dd-04d71902f005 | Buruboun Garada | failed |        0
+(1 row)
+*/
+
+/* 4. Show the full result object for a completed job
+SELECT id, payload->>'title' AS title, status, progress, result
+FROM music_jobs
+WHERE status = 'done'
+LIMIT 1;
+
+                  id                  | title  | status | progress |                                                                                                                                                                        result                                                                                                                                                                         
+--------------------------------------+--------+--------+----------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ 019e0a23-050b-7cd0-9091-c81ce85f694c | Hiruga | done   |      100 | {"trimmed_path": "uploads/processed/trimmed_12a1b35871580a987e3ed5c049ef784b.wav", "waveform_path": "uploads/processed/waveform_12a1b35871580a987e3ed5c049ef784b.json", "converted_path": "uploads/processed/converted_12a1b35871580a987e3ed5c049ef784b.mp3", "normalized_path": "uploads/processed/normalized_12a1b35871580a987e3ed5c049ef784b.wav"}
+(1 row)
 */
