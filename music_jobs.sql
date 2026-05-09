@@ -601,3 +601,144 @@ LIMIT 1;
  019e0a23-050b-7cd0-9091-c81ce85f694c | Hiruga | done   |      100 | {"trimmed_path": "uploads/processed/trimmed_12a1b35871580a987e3ed5c049ef784b.wav", "waveform_path": "uploads/processed/waveform_12a1b35871580a987e3ed5c049ef784b.json", "converted_path": "uploads/processed/converted_12a1b35871580a987e3ed5c049ef784b.mp3", "normalized_path": "uploads/processed/normalized_12a1b35871580a987e3ed5c049ef784b.wav"}
 (1 row)
 */
+
+/* ====================================================================================
+STEP 5 - updated_at
+==================================================================================== */
+
+ALTER TABLE music_jobs
+    ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- QUESTIONS/ANSWERS --
+
+/* 1. Why is created_at not enough?
+If one wanted to calculate how long a job took from when it began processing until it 
+was done, a field in addition to created_at is needed. This is the reason for adding an 
+updated_at field. It is also useful for knowing whether a worker might've crashed. The 
+created_at field only tells when the job was submitted.
+*/
+
+/* 2. What goes wrong if application code maintains updated_at?
+If the application code maintains the updated_at field, then there is a possibility that 
+it may forget to set it when making an UPDATE to a record. The record is then left in an 
+inconsistent state which may lead to bugs.
+*/
+
+/* 3. Write a query that would power an SSE health check endpoint.
+SELECT status, progress, updated_at
+FROM music_jobs
+WHERE public_id = $1 AND updated_at > $2
+
+Given the public_id of a job and a time value of the last updated_at value as parameters, 
+this query run by the server can detect when a job has been updated and then notify the 
+client of the event (SSE). 
+*/
+
+-- SAMPLE DATA --
+
+/*
+Before UPDATE
+SELECT id, payload->>'title' AS title, status, progress, updated_at
+FROM music_jobs
+ORDER BY created_at
+OFFSET 1 LIMIT 1;
+
+                  id                  | title |   status   | progress |          updated_at           
+--------------------------------------+-------+------------+----------+-------------------------------
+ 019e0a23-08fe-733c-b146-c2b411010a5c | Miami | processing |       25 | 2026-05-09 12:32:40.777033-06
+(1 row)
+*/
+
+UPDATE music_jobs
+SET progress = 50,
+result = result || jsonb_build_object(
+    'trimmed_path', 'uploads/processed/trimmed_' || md5(payload->>'title') || '.mp3'
+)
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
+
+/*
+After UPDATE with stale data
+SELECT id, payload->>'title' AS title, status, progress, updated_at
+FROM music_jobs
+ORDER BY created_at
+OFFSET 1 LIMIT 1;
+
+                  id                  | title |   status   | progress |          updated_at           
+--------------------------------------+-------+------------+----------+-------------------------------
+ 019e0a23-08fe-733c-b146-c2b411010a5c | Miami | processing |       50 | 2026-05-09 12:32:40.777033-06
+(1 row)
+
+Note how the updated_at field is the same from the previous query.
+*/
+
+UPDATE music_jobs
+SET progress = 75, updated_at = now(), -- updated_at being changed to now()
+result = result || jsonb_build_object(
+    'converted_path', 'uploads/processed/converted_' || md5(payload->>'title') || '.mp3'
+)
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
+
+/*
+After UPDATE with correct updated_at
+SELECT id, payload->>'title' AS title, status, progress, updated_at
+FROM music_jobs
+ORDER BY created_at
+OFFSET 1 LIMIT 1;
+
+                  id                  | title |   status   | progress |          updated_at           
+--------------------------------------+-------+------------+----------+-------------------------------
+ 019e0a23-08fe-733c-b146-c2b411010a5c | Miami | processing |       75 | 2026-05-09 12:41:23.118813-06
+(1 row)
+
+Note how the updated_at field has now been changed to reflect when progress was last updated.
+*/
+
+/*
+Updating the updated_at field in this manner is fragile because we as programmers may forget 
+to maintain the field in the application code with our constructed queries.
+*/
+
+-- VERIFICATION QUERIES --
+
+/* 1. Find jobs that changed in the last 60 seconds.
+SELECT id, payload->>'title' AS title, status, progress, updated_at
+FROM music_jobs
+WHERE updated_at > now() - INTERVAL '60 seconds'
+ORDER BY updated_at DESC;
+
+                  id                  |      title      |   status   | progress |          updated_at           
+--------------------------------------+-----------------+------------+----------+-------------------------------
+ 019e0a23-08fe-733c-b146-c2b411010a5c | Miami           | processing |       75 | 2026-05-09 12:46:56.117368-06
+ 019e0a23-0ce8-79e0-a6dd-04d71902f005 | Buruboun Garada | failed     |        0 | 2026-05-09 12:46:45.70571-06
+(2 rows)
+
+Note that some previous queries were rerun with updated_at changed.
+*/
+
+/* 2. Find jobs stuck in processing for more than 5 minutes.
+SELECT id, payload->>'title' AS title, status, progress, created_at, updated_at
+FROM music_jobs
+WHERE status = 'processing' AND updated_at < now() - INTERVAL '5 minutes';
+
+                  id                  | title |   status   | progress |          created_at          |          updated_at           
+--------------------------------------+-------+------------+----------+------------------------------+-------------------------------
+ 019e0a23-08fe-733c-b146-c2b411010a5c | Miami | processing |       75 | 2026-05-08 18:28:48.76592-06 | 2026-05-09 12:46:56.117368-06
+(1 row)
+
+Note that 5 minutes had passed when recording the results of this query.
+*/
+
+/* 3. How long did each completed job take?
+SELECT id, payload->>'title' AS title, status, progress, updated_at - created_at AS processing_time
+FROM music_jobs
+WHERE status = 'done';
+
+                  id                  | title  | status | progress | processing_time 
+--------------------------------------+--------+--------+----------+-----------------
+ 019e0a23-050b-7cd0-9091-c81ce85f694c | Hiruga | done   |      100 | 18:03:53.029848
+(1 row)
+
+Note that the long processing time is due to the record being created a day before 
+while the table was being incrementally worked on. Typical values would be in the 
+range of seconds or minutes.
+*/
