@@ -60,10 +60,10 @@ globally is recorded.
 */
 
 -- SAMPLE DATA --
+-- Note that pg_sleep is used to make sure the created_at aren't all the same.
 
 INSERT INTO music_jobs (payload)
-VALUES
-(
+VALUES (
     '{
         "filename": "hiruga.wav",
         "mime_type": "audio/wav",
@@ -77,8 +77,12 @@ VALUES
         "channels": 2,
         "bit_depth": 24
     }'::JSONB
-),
-(
+);
+
+SELECT pg_sleep(1);
+
+INSERT INTO music_jobs (payload)
+VALUES (
     '{
         "filename": "miami.mp3",
         "mime_type": "audio/mpeg",
@@ -90,8 +94,12 @@ VALUES
         "duration_s": 224,
         "bitrate_kbps": 256
     }'::JSONB
-),
-(
+);
+
+SELECT pg_sleep(1);
+
+INSERT INTO music_jobs (payload)
+VALUES (
     '{
         "filename": "buruboun-garada.mp3",
         "mime_type": "audio/mpeg",
@@ -112,11 +120,11 @@ SELECT payload->>'title' AS music_job_title, created_at
 FROM music_jobs
 ORDER BY created_at;
 
- music_job_title |          created_at          
------------------+------------------------------
- Hiruga          | 2026-05-08 15:00:54.20712-06
- Miami           | 2026-05-08 15:00:54.20712-06
- Buruboun Garada | 2026-05-08 15:00:54.20712-06
+ music_job_title |          created_at           
+-----------------+-------------------------------
+ Hiruga          | 2026-05-08 18:28:47.747185-06
+ Miami           | 2026-05-08 18:28:48.76592-06
+ Buruboun Garada | 2026-05-08 18:28:49.768337-06
 (3 rows)
 */
 
@@ -133,14 +141,14 @@ FROM music_jobs;
 */
 
 /* 3. Find only MP3 uploads.
-SELECT id, payload->>'filename' AS job_filename, payload->>'mime_type' AS mime_type
+SELECT payload->>'filename' AS job_filename, payload->>'mime_type' AS mime_type
 FROM music_jobs
 WHERE payload->>'mime_type' = 'audio/mpeg';
 
-                  id                  |    job_filename     | mime_type  
---------------------------------------+---------------------+------------
- 019e0964-b044-7439-a140-9dfe8f09e9d2 | miami.mp3           | audio/mpeg
- 019e0964-b044-748b-9c43-accc7de06c89 | buruboun-garada.mp3 | audio/mpeg
+    job_filename     | mime_type  
+---------------------+------------
+ miami.mp3           | audio/mpeg
+ buruboun-garada.mp3 | audio/mpeg
 (2 rows)
 */
 
@@ -151,7 +159,7 @@ WHERE payload ? 'publisher';
 
                   id                  |    job_filename     
 --------------------------------------+---------------------
- 019e0964-b044-748b-9c43-accc7de06c89 | buruboun-garada.mp3
+ 019e0a23-0ce8-79e0-a6dd-04d71902f005 | buruboun-garada.mp3
 (1 row)
 */
 
@@ -196,15 +204,14 @@ SELECT id, public_id FROM music_jobs;
 
                   id                  |              public_id               
 --------------------------------------+--------------------------------------
- 019e0964-b043-71e1-a637-fa9fb4723d5b | 48182626-ea3f-48e7-9235-eec18916d77d
- 019e0964-b044-7439-a140-9dfe8f09e9d2 | 0eed9e62-98f5-47aa-8ec9-6ca691969be2
- 019e0964-b044-748b-9c43-accc7de06c89 | 4f40c13e-2ad1-4fb6-995e-4c1db3232d9a
+ 019e0a23-050b-7cd0-9091-c81ce85f694c | d43440f1-da73-412f-960b-017b25c79928
+ 019e0a23-08fe-733c-b146-c2b411010a5c | f28b59a3-66d1-45af-977e-385bc95d881c
+ 019e0a23-0ce8-79e0-a6dd-04d71902f005 | 28157939-27c8-4f6e-a60b-3136bf04496b
 (3 rows)
 
 From the results, you can notice how in the id field, which is using uuidv7, the first
-part is the exact same, with the second and third parts quite similar. This probably 
-corresponds to the timestamp that is embedded. There is no common or similar pattern seen 
-in the public_id field.
+part is the exact same. This corresponds to the timestamp that is embedded. There is no 
+common or similar pattern seen in the public_id field.
 */
 
 /* 2. Run uuid_extract_timestamp() on both columns - what does this prove?
@@ -212,9 +219,9 @@ SELECT uuid_extract_timestamp(id) AS id_timestamp, uuid_extract_timestamp(public
 
         id_timestamp        | public_id_timestamp 
 ----------------------------+---------------------
- 2026-05-08 15:00:54.211-06 | [null]
- 2026-05-08 15:00:54.212-06 | [null]
- 2026-05-08 15:00:54.212-06 | [null]
+ 2026-05-08 18:28:47.755-06 | [null]
+ 2026-05-08 18:28:48.766-06 | [null]
+ 2026-05-08 18:28:49.768-06 | [null]
 (3 rows)
 
 This proves that uuidv7 has a timestamp component and that uuidv4 does not.
@@ -226,7 +233,7 @@ date: Fri, 08 May 2026 23:35:31 GMT
 content-type: application/json
 content-length: 56
 {
-    "job_id": "48182626-ea3f-48e7-9235-eec18916d77d"
+    "job_id": "d43440f1-da73-412f-960b-017b25c79928"
 }
 
 After insert, the server would return a JSON response with the job_id, which is the 
@@ -249,4 +256,152 @@ When the client polls for the particular job using the job_id or public_id, the 
 return a JSON response with the status and progress of the job. The HTTP status code is 200 
 for OK, and the client would use the response to check the overall job. Note that these
 fields are added in STEP 3.
+*/
+
+/* ====================================================================================
+STEP 3 - status, progress
+==================================================================================== */
+
+ALTER TABLE music_jobs
+    ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'done', 'failed')),
+    ADD COLUMN progress INTEGER NOT NULL DEFAULT 0
+        CHECK (progress BETWEEN 0 AND 100);
+
+-- QUESTIONS/ANSWERS --
+
+/* 1. Why are status and progress real columns, not inside payload JSONB?
+The status and progress fields are real columns because these fields will be queried 
+more often, and it is faster when they are columns and not inside the payload JSONB. 
+These fields also concern more the job record itself, rather than as part of the metadata
+for a music file.
+*/
+
+/* 2. What happens if a buggy worker writes status = 'complet'?
+The PostgreSQL database would not complete the write, instead returning an error. This 
+is because of the CHECK constraint added in the definition of the column, which limits 
+the valid values to the correctly spelled statuses.
+*/
+
+/* 3. Why does the CHECK constraint matter more than application validation?
+It matters more because the constraint is enforced at the database level instead of the 
+application level. As a result, the constraint cannot be bypassed due to bugs at the 
+application level or bad data being accidentally entered.
+*/
+
+/* 4. Draw the state machine for a job lifecycle.
+    START
+      |
+      v
++------------+
+|  PENDING   |
++------------+
+      |
+      | worker starts processing
+      v
++--------------+                         +----------+
+| PROCESSING   | -- processing error --> |  FAILED  |
++--------------+                         +----------+
+      |                                        |
+      | processing completes                   |
+      v                                        |
++-------------+                                v
+| COMPLETED   | --------------------------->  END
++-------------+
+
+Note that START and END are used in place of the typical UML symbols in a 
+state (machine) diagram.
+*/
+
+-- SAMPLE DATA --
+
+UPDATE music_jobs
+SET status = 'processing', progress = 25 -- the first UPDATE from pending should change status to processing
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+UPDATE music_jobs
+SET progress = 50
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+UPDATE music_jobs
+SET status = 'done', progress = 100
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+UPDATE music_jobs
+SET status = 'invalid'
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+/*
+ERROR:  new row for relation "music_jobs" violates check constraint "music_jobs_status_check"
+DETAIL:  Failing row contains (019e0a23-050b-7cd0-9091-c81ce85f694c, {"year": 2015, "album": "Garifuna Nuguya", "genre": "Worldwide",..., 2026-05-08 18:28:47.747185-06, d43440f1-da73-412f-960b-017b25c79928, invalid, 100).
+*/
+
+UPDATE music_jobs
+SET progress = 150
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+
+/*
+ERROR:  new row for relation "music_jobs" violates check constraint "music_jobs_progress_check"
+DETAIL:  Failing row contains (019e0a23-050b-7cd0-9091-c81ce85f694c, {"year": 2015, "album": "Garifuna Nuguya", "genre": "Worldwide",..., 2026-05-08 18:28:47.747185-06, d43440f1-da73-412f-960b-017b25c79928, done, 150).
+*/
+
+-- VERIFICATION QUERIES
+
+-- update the second record to be processing so that we have a processing job for Query 1.
+UPDATE music_jobs
+SET status = 'processing', progress = 25
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
+
+/* 1. What does the client see when polling a processing job?
+SELECT status, progress
+FROM music_jobs
+WHERE public_id = 'f28b59a3-66d1-45af-977e-385bc95d881c';
+
+   status   | progress 
+------------+----------
+ processing |       25
+(1 row)
+
+Note that this is the query from which the JSON response would be created. Such 
+a response would look like this:
+
+HTTP/2 200 
+date: Fri, 08 May 2026 23:37:30 GMT
+content-type: application/json
+content-length: 50
+{
+    "status": "processing",
+    "progress": 25
+}
+*/
+
+/* 2. What query does the worker run to find its next job?
+SELECT id
+FROM music_jobs
+WHERE status = 'pending'
+ORDER BY created_at
+LIMIT 1;
+
+                  id                  
+--------------------------------------
+ 019e0a23-0ce8-79e0-a6dd-04d71902f005
+(1 row)
+
+Note that this is the third job which is still pending. See Query 3.
+*/
+
+/* 3. Show all jobs with their current states
+SELECT id, payload->>'title' AS title, status, progress, created_at
+FROM music_jobs
+ORDER BY created_at;
+
+                  id                  |      title      |   status   | progress |          created_at           
+--------------------------------------+-----------------+------------+----------+-------------------------------
+ 019e0a23-050b-7cd0-9091-c81ce85f694c | Hiruga          | done       |      100 | 2026-05-08 18:28:47.747185-06
+ 019e0a23-08fe-733c-b146-c2b411010a5c | Miami           | processing |       25 | 2026-05-08 18:28:48.76592-06
+ 019e0a23-0ce8-79e0-a6dd-04d71902f005 | Buruboun Garada | pending    |        0 | 2026-05-08 18:28:49.768337-06
+(3 rows)
+
+Note that additional fields are shown and the result was ordered to more clearly show 
+the results of the UPDATE queries from before.
 */
