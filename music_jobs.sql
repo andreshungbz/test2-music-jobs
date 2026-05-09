@@ -8,7 +8,6 @@ May 14, 2026
 
 /* ====================================================================================
 STEP 0 - Reset
-
 This initial extra step is used to clear the database so that this file can be ran
 and iterated upon with the \i music_jobs.sql command in psql.
 ==================================================================================== */
@@ -36,8 +35,8 @@ CREATE TABLE IF NOT EXISTS music_jobs (
 
 /* 1. Why UUID over SERIAL for the primary key?
 While SERIAL works great as a unique field for simpler databases, UUID is designed to be
-unique even across other tables and databases. For example, if another jobs tabled needed
-to be merged into the music_jobs table, then using UUID make it extremely less likely to
+unique even across other tables and databases. For example, if another jobs table needed
+to be merged into the music_jobs table, then using UUID makes it extremely less likely to
 cause a conflict compared to the incrementing integers of SERIAL. It is also better from a 
 security standpoint since with SERIAL, it may be possible to enumerate records. 
 */
@@ -53,7 +52,7 @@ The key-value pair structure of JSON works well for storing metadata information
 The JSONB type is optimized for searching, indexing, and filtering since PostgreSQL parses the 
 input on insert. This is preferable to the JSON type, which PostgreSQL stores as is (whitespace, 
 duplicates, etc.), since this allows us to search/filter music jobs by artist, for example, 
-which in turn is a useful statistic. The music jobs use case works better for JSONB.
+which in turn is a useful statistic. The music jobs use case works better with JSONB.
 */
 
 /* 4. Why TIMESTAMPTZ over TIMESTAMP?
@@ -107,6 +106,7 @@ VALUES (
 
 SELECT pg_sleep(1);
 
+-- extra field: publisher
 INSERT INTO music_jobs (payload)
 VALUES (
     '{
@@ -127,9 +127,7 @@ VALUES (
 -- VERIFICATION QUERIES --
 
 /* 1. Show all jobs ordered by creation time.
-SELECT payload->>'title' AS music_job_title, created_at
-FROM music_jobs
-ORDER BY created_at;
+SELECT payload->>'title' AS music_job_title, created_at FROM music_jobs ORDER BY created_at;
 
  music_job_title |          created_at           
 -----------------+-------------------------------
@@ -140,8 +138,7 @@ ORDER BY created_at;
 */
 
 /* 2. Extract just the original_filename and mime_type from each job.
-SELECT payload->>'original_filename' AS job_filename, payload->>'mime_type' AS mime_type
-FROM music_jobs;
+SELECT payload->>'original_filename' AS job_filename, payload->>'mime_type' AS mime_type FROM music_jobs;
 
     job_filename     | mime_type  
 ---------------------+------------
@@ -153,8 +150,7 @@ FROM music_jobs;
 
 /* 3. Find only MP3 uploads.
 SELECT payload->>'original_filename' AS job_filename, payload->>'mime_type' AS mime_type
-FROM music_jobs
-WHERE payload->>'mime_type' = 'audio/mpeg';
+FROM music_jobs WHERE payload->>'mime_type' = 'audio/mpeg';
 
     job_filename     | mime_type  
 ---------------------+------------
@@ -164,14 +160,14 @@ WHERE payload->>'mime_type' = 'audio/mpeg';
 */
 
 /* 4. Find the jobs that has the extra field.
-SELECT id, payload->>'original_filename' AS job_filename
-FROM music_jobs
-WHERE payload ? 'publisher';
+SELECT id, payload->>'original_filename' AS job_filename FROM music_jobs WHERE payload ? 'publisher';
 
                   id                  |    job_filename     
 --------------------------------------+---------------------
  019e0a23-0ce8-79e0-a6dd-04d71902f005 | buruboun-garada.mp3
 (1 row)
+
+Note the use of the key existence operator (?).
 */
 
 /* ====================================================================================
@@ -179,12 +175,13 @@ STEP 2 - public_id
 ==================================================================================== */
 
 -- Note that PostgreSQL automatically creates an index for a field with the UNIQUE constraint.
-ALTER TABLE music_jobs ADD COLUMN public_id UUID UNIQUE NOT NULL DEFAULT uuidv4();
+ALTER TABLE music_jobs
+    ADD COLUMN public_id UUID UNIQUE NOT NULL DEFAULT uuidv4();
 
 -- QUESTIONS/ANSWERS --
 
 /* 1. Why does this column use uuidv4() and not uuidv7()?
-As uuidv7 has the timestamp embedded, it can potentially be a security concern if it was
+As uuidv7 has an embedded timestamp, it can potentially be a security concern if it was
 used for the public_id field. In this case, when a job was created could be used by an 
 attacker to analyze traffic. Determining the average number of jobs being created could be
 useful to a competitor, or even maliciously used in configuring a DDOS attack. Using uuidv4()
@@ -192,11 +189,11 @@ is better for the public_id field since it does not embed a timestamp.
 */
 
 /* 2. What does uuid_extract_timestamp() reveal about uuidv7?
-The PostgreSQL uuid_extract)timestamp function reveals when the UUID was generated. This is 
+The PostgreSQL uuid_extract_timestamp() function reveals when the UUID was generated. This is 
 a security concern as discussed in Question 1.
 */
 
-/* 3. WHy does the UNIQUE constraint make CREATE INDEX unnecessary?
+/* 3. Why does the UNIQUE constraint make CREATE INDEX unnecessary?
 When a field has the UNIQUE constraint, PostgreSQL automatically creates a unique B-Tree
 index for it. The same occurs for primary keys and EXCLUSION constraints.
 */
@@ -204,7 +201,7 @@ index for it. The same occurs for primary keys and EXCLUSION constraints.
 /* 4. What is the two-ID pattern and why does it matter?
 The two-ID pattern involves using two different identifiers for one record. Usually, one
 is internal and the other is public. It matters because it allows us to take advantage of
-both the better indexing performance offered by an id that can be ordered like uuidv7 and 
+both the better indexing performance offered by an id that can be ordered like uuidv7, and 
 the obfuscation of metadata offered by another id that is truly random like uuidv4. 
 */
 
@@ -220,7 +217,7 @@ SELECT id, public_id FROM music_jobs;
  019e0a23-0ce8-79e0-a6dd-04d71902f005 | 28157939-27c8-4f6e-a60b-3136bf04496b
 (3 rows)
 
-From the results, you can notice how in the id field, which is using uuidv7, the first
+From the results, one can notice how in the id field, which is using uuidv7, the first
 part is the exact same. This corresponds to the timestamp that is embedded. There is no 
 common or similar pattern seen in the public_id field.
 */
@@ -266,7 +263,7 @@ content-length: 50
 When the client polls for the particular job using the job_id or public_id, the server would 
 return a JSON response with the status and progress of the job. The HTTP status code is 200 
 for OK, and the client would use the response to check the overall job. Note that these
-fields are added in STEP 3.
+fields are added in STEP 3 and further expanded in a later STEP.
 */
 
 /* ====================================================================================
@@ -316,26 +313,27 @@ application level or bad data being accidentally entered.
       |                                        |
       | processing completes                   |
       v                                        |
-+-------------+                                v
-| COMPLETED   | --------------------------->  END
-+-------------+
++------------+                                 v
+|    DONE    | ---------------------------->  END
++------------+
 
 Note that START and END are used in place of the typical UML symbols in a 
 state (machine) diagram.
 */
 
 -- SAMPLE DATA --
+-- Using the oldest job.
 
 UPDATE music_jobs
 SET status = 'processing', progress = 25 -- the first UPDATE from pending should change status to processing
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1); -- the oldest job
+
+UPDATE music_jobs
+SET progress = 50 -- the second UPDATE doesn't need to set status, as it is still processing
 WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 
 UPDATE music_jobs
-SET progress = 50
-WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
-
-UPDATE music_jobs
-SET status = 'done', progress = 100
+SET status = 'done', progress = 100 -- the third UPDATE changes status since the job is done
 WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 
 UPDATE music_jobs
@@ -358,15 +356,13 @@ DETAIL:  Failing row contains (019e0a23-050b-7cd0-9091-c81ce85f694c, {"year": 20
 
 -- VERIFICATION QUERIES --
 
--- update the second record to be processing so that we have a processing job for Query 1.
+-- Update the second oldest job to be processing so that we have a processing job for Query 1 (OFFSET 1).
 UPDATE music_jobs
 SET status = 'processing', progress = 25
 WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
 
 /* 1. What does the client see when polling a processing job?
-SELECT status, progress
-FROM music_jobs
-WHERE public_id = 'f28b59a3-66d1-45af-977e-385bc95d881c';
+SELECT status, progress FROM music_jobs WHERE public_id = 'f28b59a3-66d1-45af-977e-385bc95d881c';
 
    status   | progress 
 ------------+----------
@@ -374,7 +370,7 @@ WHERE public_id = 'f28b59a3-66d1-45af-977e-385bc95d881c';
 (1 row)
 
 Note that this is the query from which the JSON response would be created. Such 
-a response would look like this:
+a response would look like this so far:
 
 HTTP/2 200 
 date: Fri, 08 May 2026 23:37:30 GMT
@@ -387,24 +383,18 @@ content-length: 50
 */
 
 /* 2. What query does the worker run to find its next job?
-SELECT id
-FROM music_jobs
-WHERE status = 'pending'
-ORDER BY created_at
-LIMIT 1;
+SELECT id FROM music_jobs WHERE status = 'pending' ORDER BY created_at LIMIT 1;
 
                   id                  
 --------------------------------------
  019e0a23-0ce8-79e0-a6dd-04d71902f005
 (1 row)
 
-Note that this is the third job which is still pending. See Query 3.
+Note that this is the third oldest job which is still pending. See Query 3.
 */
 
 /* 3. Show all jobs with their current states
-SELECT id, payload->>'title' AS title, status, progress, created_at
-FROM music_jobs
-ORDER BY created_at;
+SELECT id, payload->>'title' AS title, status, progress, created_at FROM music_jobs ORDER BY created_at;
 
                   id                  |      title      |   status   | progress |          created_at           
 --------------------------------------+-----------------+------------+----------+-------------------------------
@@ -429,36 +419,37 @@ ALTER TABLE music_jobs
 
 /* 1. Why does the result default to '{}' and not NULL?
 Using an empty object '{}' is preferable to NULL since it keeps a consistent JSON structure 
-where JSON operation can be safely performed without NULL checks. It can be logically 
+where JSON operations can be safely performed without NULL checks. It can be logically 
 interpreted as having no result data yet, rather than unknown as NULL could imply.
 */
 
 /* 2. Why is error_msg TEXT and not inside the result JSONB?
 Likewise with the status and progress fields, the error_msg field is part of the job 
-lifecycle does not particularly relate to metadata of a music file or its result. 
+lifecycle and does not particularly relate to metadata of a music file or its result. 
 Using the TEXT type provides a simple and consistent structure for error messages.
 */
 
 /* 3. What does the || operator do to a JSONB object?
 It is the merge operator, taking the operand on the right-hand side, and merging it 
-with the operand on the left-hand side. If a key does not exist on the left-hand 
-JSONB object, a new one is created. If a key already exists, the value is overwritten.
+with the operand on the left-hand side. For a JSONB object, if a key does not exist 
+on the left-hand JSONB object, a new one is created. If a key already exists, the 
+value is overwritten.
 */
 
 /* 4. Why does each stage read from the original file, not the previous stage's output?
-Of the four stages: Normalize, Trim silence, Convert, and Waveform, the original file 
+Of the four stages: normalize, trim silence, convert, and waveform, the original file 
 is read instead of using the previous stage's output so that the result of one stage 
-is not reflected in another stage. Having the stages be independent has the advantages 
-of being able to be processed in parallel and more consistent results. Errors or artifacts 
-aren't carried over across stages. For example, adjusting the volume in the Normalize 
-stage would affect the generated waveform for the Waveform stage. 
+is not reflected in another stage. Having the stages be independent has the advantage 
+of being able to be processed in parallel. Additionally, errors or artifacts aren't carried 
+over across stages. For example, adjusting the volume in the normalize stage would 
+most certainly affect the generated waveform for the waveform stage. 
 */
 
 -- SAMPLE DATA --
 -- Simulating stages for the oldest job.
 
 UPDATE music_jobs
-SET status = 'processing', progress = 25,
+SET status = 'processing', progress = 25, -- change status to processing
 result = result || jsonb_build_object(
     'normalized_path', 'uploads/processed/normalized_' || md5(payload->>'title') || '.wav'
 )
@@ -466,8 +457,7 @@ WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 
 /*
 SELECT  payload->>'title' AS title, status, progress, result
-FROM music_jobs
-WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+FROM music_jobs WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 
  title  |   status   | progress |                                          result                                          
 --------+------------+----------+------------------------------------------------------------------------------------------
@@ -484,8 +474,7 @@ WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 
 /*
 SELECT  payload->>'title' AS title, status, progress, result
-FROM music_jobs
-WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+FROM music_jobs WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 
  title  |   status   | progress |                                                                                   result                                                                                   
 --------+------------+----------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -502,8 +491,7 @@ WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 
 /*
 SELECT  payload->>'title' AS title, status, progress, result
-FROM music_jobs
-WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+FROM music_jobs WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 
  title  |   status   | progress |                                                                                                                              result                                                                                                                              
 --------+------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -512,7 +500,7 @@ WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 */
 
 UPDATE music_jobs
-SET status = 'done', progress = 100,
+SET status = 'done', progress = 100, -- change status to done
 result = result || jsonb_build_object(
     'waveform_path', 'uploads/processed/waveform_' || md5(payload->>'title') || '.json'
 )
@@ -520,8 +508,7 @@ WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 
 /*
 SELECT  payload->>'title' AS title, status, progress, result
-FROM music_jobs
-WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
+FROM music_jobs WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 
  title  | status | progress |                                                                                                                                                                        result                                                                                                                                                                         
 --------+--------+----------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -529,15 +516,14 @@ WHERE id = (SELECT id FROM music_jobs ORDER BY created_at LIMIT 1);
 (1 row)
 */
 
--- Simulating failure for the third oldest job
+-- Simulating failure for the third oldest job (OFFSET 2)
 UPDATE music_jobs
 SET status = 'failed', progress = 0
 WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 2 LIMIT 1);
 
 /*
 SELECT  payload->>'title' AS title, status, progress, result
-FROM music_jobs
-WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 2 LIMIT 1);
+FROM music_jobs WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 2 LIMIT 1);
 
       title      | status | progress | result 
 -----------------+--------+----------+--------
@@ -562,9 +548,11 @@ content-length: 439
         "normalized_path": "uploads/processed/normalized_12a1b35871580a987e3ed5c049ef784b.wav"
     }
 }
+
+Note that in this case, the result property is included, which shows other properties with paths.
 */
 
--- Update second oldest job for Query 2
+-- Update second oldest job for Query 2 (OFFSET 1)
 UPDATE music_jobs
 SET status = 'processing', progress = 25,
 result = result || jsonb_build_object(
@@ -586,14 +574,12 @@ content-length: 439
 }
 
 Note that in this case, it is assumed that each stage is an independent component 
-of the result which the client can download, and that are readily available despite the 
-overall status being processing.
+of the result which the client can already access, despite the overall status 
+being processing.
 */
 
 /* 3. How do you find all failed jobs?
-SELECT id, payload->>'title' AS title, status, progress
-FROM music_jobs
-WHERE status = 'failed';
+SELECT id, payload->>'title' AS title, status, progress FROM music_jobs WHERE status = 'failed';
 
                   id                  |      title      | status | progress 
 --------------------------------------+-----------------+--------+----------
@@ -602,10 +588,8 @@ WHERE status = 'failed';
 */
 
 /* 4. Show the full result object for a completed job
-SELECT id, payload->>'title' AS title, status, progress, result
-FROM music_jobs
-WHERE status = 'done'
-LIMIT 1;
+SELECT id, payload->>'title' AS title, status, progress, result FROM music_jobs
+WHERE status = 'done' LIMIT 1;
 
                   id                  | title  | status | progress |                                                                                                                                                                        result                                                                                                                                                                         
 --------------------------------------+--------+--------+----------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -636,9 +620,7 @@ inconsistent state which may lead to bugs.
 */
 
 /* 3. Write a query that would power an SSE health check endpoint.
-SELECT status, progress, updated_at
-FROM music_jobs
-WHERE public_id = $1 AND updated_at > $2
+SELECT status, progress, updated_at FROM music_jobs WHERE public_id = $1 AND updated_at > $2
 
 Given the public_id of a job and a time value of the last updated_at value as parameters, 
 this query run by the server can detect when a job has been updated and then notify the 
@@ -646,13 +628,11 @@ client of the event (SSE).
 */
 
 -- SAMPLE DATA --
+-- Using the second oldest job (OFFSET 1).
 
-/*
-Before UPDATE
+/* Before UPDATE
 SELECT id, payload->>'title' AS title, status, progress, updated_at
-FROM music_jobs
-ORDER BY created_at
-OFFSET 1 LIMIT 1;
+FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1;
 
                   id                  | title |   status   | progress |          updated_at           
 --------------------------------------+-------+------------+----------+-------------------------------
@@ -667,19 +647,16 @@ result = result || jsonb_build_object(
 )
 WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
 
-/*
-After UPDATE with stale data
+/* After UPDATE with stale data
 SELECT id, payload->>'title' AS title, status, progress, updated_at
-FROM music_jobs
-ORDER BY created_at
-OFFSET 1 LIMIT 1;
+FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1;
 
                   id                  | title |   status   | progress |          updated_at           
 --------------------------------------+-------+------------+----------+-------------------------------
  019e0a23-08fe-733c-b146-c2b411010a5c | Miami | processing |       50 | 2026-05-09 12:32:40.777033-06
 (1 row)
 
-Note how the updated_at field is the same from the previous query.
+Note how the updated_at field is the same from the previous UPDATE.
 */
 
 UPDATE music_jobs
@@ -689,12 +666,9 @@ result = result || jsonb_build_object(
 )
 WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
 
-/*
-After UPDATE with correct updated_at
+/* After UPDATE with correct updated_at
 SELECT id, payload->>'title' AS title, status, progress, updated_at
-FROM music_jobs
-ORDER BY created_at
-OFFSET 1 LIMIT 1;
+FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1;
 
                   id                  | title |   status   | progress |          updated_at           
 --------------------------------------+-------+------------+----------+-------------------------------
@@ -713,9 +687,7 @@ to maintain the field in the application code with our constructed queries.
 
 /* 1. Find jobs that changed in the last 60 seconds.
 SELECT id, payload->>'title' AS title, status, progress, updated_at
-FROM music_jobs
-WHERE updated_at > now() - INTERVAL '60 seconds'
-ORDER BY updated_at DESC;
+FROM music_jobs WHERE updated_at > now() - INTERVAL '60 seconds' ORDER BY updated_at DESC;
 
                   id                  |      title      |   status   | progress |          updated_at           
 --------------------------------------+-----------------+------------+----------+-------------------------------
@@ -728,21 +700,19 @@ Note that some previous queries were rerun with updated_at changed.
 
 /* 2. Find jobs stuck in processing for more than 5 minutes.
 SELECT id, payload->>'title' AS title, status, progress, created_at, updated_at
-FROM music_jobs
-WHERE status = 'processing' AND updated_at < now() - INTERVAL '5 minutes';
+FROM music_jobs WHERE status = 'processing' AND updated_at < now() - INTERVAL '5 minutes';
 
                   id                  | title |   status   | progress |          created_at          |          updated_at           
 --------------------------------------+-------+------------+----------+------------------------------+-------------------------------
  019e0a23-08fe-733c-b146-c2b411010a5c | Miami | processing |       75 | 2026-05-08 18:28:48.76592-06 | 2026-05-09 12:46:56.117368-06
 (1 row)
 
-Note that 5 minutes had passed when recording the results of this query.
+Note that 5 minutes minimum had passed when recording the results of this query.
 */
 
 /* 3. How long did each completed job take?
 SELECT id, payload->>'title' AS title, status, progress, updated_at - created_at AS processing_time
-FROM music_jobs
-WHERE status = 'done';
+FROM music_jobs WHERE status = 'done';
 
                   id                  | title  | status | progress | processing_time 
 --------------------------------------+--------+--------+----------+-----------------
@@ -750,7 +720,7 @@ WHERE status = 'done';
 (1 row)
 
 Note that the long processing time is due to the record being created a day before 
-while the table was being incrementally worked on. Typical values would be in the 
+while the table was being incrementally worked on. Typical values should be in the 
 range of seconds or minutes.
 */
 
@@ -779,7 +749,7 @@ UPDATE would not correctly update the record, and we would then require another 
 */
 
 /* 2. What is NEW and what is OLD in a trigger function?
-They are special row variables available in triggers.
+NEW and OLD are special row variables that are available in triggers.
 NEW represents the new version of the row in INSERT and UPDATE triggers. 
 OLD represents the previous version of the row in UPDATE and DELETE triggers.
 */
@@ -797,12 +767,11 @@ updated_at field, the function could be reused for that table in another trigger
 */
 
 -- SAMPLE DATA --
+-- Using the second oldest job (OFFSET 1).
 
 /* Before UPDATE
 SELECT id, payload->>'title' AS title, status, progress, updated_at
-FROM music_jobs
-ORDER BY created_at
-OFFSET 1 LIMIT 1;
+FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1;
 
                   id                  | title |   status   | progress |          updated_at           
 --------------------------------------+-------+------------+----------+-------------------------------
@@ -819,9 +788,7 @@ WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
 
 /* After UPDATE
 SELECT id, payload->>'title' AS title, status, progress, updated_at
-FROM music_jobs
-ORDER BY created_at
-OFFSET 1 LIMIT 1;
+FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1;
 
                   id                  | title | status | progress |          updated_at           
 --------------------------------------+-------+--------+----------+-------------------------------
@@ -838,25 +805,20 @@ WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
 
 /* After UPDATE sabotage attempt
 SELECT id, payload->>'title' AS title, status, progress, updated_at
-FROM music_jobs
-ORDER BY created_at
-OFFSET 1 LIMIT 1;
+FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1;
 
                   id                  | title | status | progress |          updated_at          
 --------------------------------------+-------+--------+----------+------------------------------
  019e0a23-08fe-733c-b146-c2b411010a5c | Miami | done   |      100 | 2026-05-09 13:39:16.46505-06
 (1 row)
 
-Note that updated_at did not become 2000-01-01, but still used now() per the trigger set. 
+Note that updated_at did not become 2000-01-01, but still used now() per the trigger. 
 No other fields for this record was changed, as this was just for demonstrating the trigger.
 */
 
-/*
-Trigger existence verification
-
+/* Trigger existence verification
 SELECT trigger_name, event_manipulation, action_timing, action_statement
-FROM information_schema.triggers
-WHERE event_object_table = 'music_jobs';
+FROM information_schema.triggers WHERE event_object_table = 'music_jobs';
 
      trigger_name      | event_manipulation | action_timing |         action_statement          
 -----------------------+--------------------+---------------+-----------------------------------
@@ -868,8 +830,7 @@ WHERE event_object_table = 'music_jobs';
 
 /* 1. Show trigger details from information_schema.triggers.
 SELECT trigger_name, event_object_table, event_manipulation, action_timing, action_statement
-FROM information_schema.triggers
-WHERE event_object_table = 'music_jobs';
+FROM information_schema.triggers WHERE event_object_table = 'music_jobs';
 
      trigger_name      | event_object_table | event_manipulation | action_timing |         action_statement          
 -----------------------+--------------------+--------------------+---------------+-----------------------------------
@@ -881,8 +842,7 @@ Note that this is practically the same query as for verifying trigger existence.
 
 /* 2. Show function details from information_schema.routines
 SELECT routine_name, routine_type, data_type
-FROM information_schema.routines
-WHERE routine_name = 'set_updated_at';
+FROM information_schema.routines WHERE routine_name = 'set_updated_at';
 
   routine_name  | routine_type | data_type 
 ----------------+--------------+-----------
@@ -917,8 +877,8 @@ SELECT
         'duration_s', (30 + random() * 600)::INTEGER, -- 30s to 10min
         'file_size',
         CASE
-            WHEN s.is_mp3 THEN (random() * 8000000 + 500000)::INTEGER -- 0.5 – 8.5 MB
-            ELSE (random() * 60000000 + 5000000)::INTEGER -- 5 – 65 MB
+            WHEN s.is_mp3 THEN (random() * 8000000 + 500000)::INTEGER -- 0.5 – 8.5 MB for MP3
+            ELSE (random() * 60000000 + 5000000)::INTEGER -- 5 – 65 MB for WAV
         END
     ) AS payload,
 
@@ -927,7 +887,7 @@ SELECT
         WHEN 'done' THEN jsonb_build_object(
             'normalized_path', 'uploads/processed/normalized_' || md5(i::text) || CASE WHEN s.is_mp3 THEN '.mp3' ELSE '.wav' END,
             'trimmed_path', 'uploads/processed/trimmed_' || md5(i::text) || CASE WHEN s.is_mp3 THEN '.mp3' ELSE '.wav' END,
-            'converted_path', 'uploads/processed/converted_' || md5(i::text) || '.mp3',
+            'converted_path', 'uploads/processed/converted_' || md5(i::text) || '.mp3', -- always MP3
             'waveform_path', 'uploads/processed/waveform_' || md5(i::text) || '.json'
         )
         ELSE '{}'::JSONB
@@ -946,9 +906,9 @@ FROM generate_series(1, 50000) AS i
 -- subquery which uses i to compute status for each row
 CROSS JOIN LATERAL (
     SELECT 
-        -- force 25% per status using modulo
+        -- using modulo to force 25% per status
         (ARRAY['pending', 'processing', 'done', 'failed'])[((i - 1) % 4) + 1] AS status,
-        -- 80% will be MP3, and 20% will be WAV (every 5 rows, 4 return true, and 1 returns false)
+        -- using modulo so that 80% will be MP3, and 20% will be WAV (every 5 rows, 4 are true, and 1 is false)
         (i % 5) < 4 AS is_mp3
 ) AS s;
 
@@ -956,10 +916,7 @@ CROSS JOIN LATERAL (
 
 /* QUERY 1: Worker Poll
 EXPLAIN ANALYZE
-SELECT id, payload
-FROM music_jobs
-WHERE status = 'pending'
-ORDER BY created_at LIMIT 1;
+SELECT id, payload FROM music_jobs WHERE status = 'pending' ORDER BY created_at LIMIT 1;
 
                                                            QUERY PLAN                                                            
 ---------------------------------------------------------------------------------------------------------------------------------
@@ -980,8 +937,7 @@ ORDER BY created_at LIMIT 1;
 
 /* QUERY 2: Client Poll
 EXPLAIN ANALYZE
-SELECT id, status, progress, result, error_msg
-FROM music_jobs
+SELECT id, status, progress, result, error_msg FROM music_jobs
 WHERE public_id = (SELECT public_id FROM music_jobs LIMIT 1);
 
                                                                 QUERY PLAN                                                                
@@ -1002,9 +958,7 @@ WHERE public_id = (SELECT public_id FROM music_jobs LIMIT 1);
 
 /* QUERY 3: JSONB Containment
 EXPLAIN ANALYZE
-SELECT id, payload->>'original_filename'
-FROM music_jobs
-WHERE payload @> '{"mime_type": "audio/mpeg"}'::JSONB;
+SELECT id, payload->>'original_filename' FROM music_jobs WHERE payload @> '{"mime_type": "audio/mpeg"}'::JSONB;
 
                                                      QUERY PLAN                                                     
 --------------------------------------------------------------------------------------------------------------------
@@ -1027,10 +981,7 @@ CREATE INDEX idx_music_jobs_result ON music_jobs USING GIN (result);
 
 /* QUERY 1: Worker Poll
 EXPLAIN ANALYZE
-SELECT id, payload
-FROM music_jobs
-WHERE status = 'pending'
-ORDER BY created_at LIMIT 1;
+SELECT id, payload FROM music_jobs WHERE status = 'pending' ORDER BY created_at LIMIT 1;
 
                                                                          QUERY PLAN                                                                         
 ------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1048,8 +999,7 @@ ORDER BY created_at LIMIT 1;
 /* QUERY 2: Client Poll
 EXPLAIN ANALYZE
 SELECT id, status, progress, result, error_msg
-FROM music_jobs
-WHERE public_id = (SELECT public_id FROM music_jobs LIMIT 1);
+FROM music_jobs WHERE public_id = (SELECT public_id FROM music_jobs LIMIT 1);
 
                                                                 QUERY PLAN                                                                
 ------------------------------------------------------------------------------------------------------------------------------------------
@@ -1069,9 +1019,7 @@ WHERE public_id = (SELECT public_id FROM music_jobs LIMIT 1);
 
 /* QUERY 3: JSONB Containment
 EXPLAIN ANALYZE
-SELECT id, payload->>'original_filename'
-FROM music_jobs
-WHERE payload @> '{"mime_type": "audio/mpeg"}'::JSONB;
+SELECT id, payload->>'original_filename' FROM music_jobs WHERE payload @> '{"mime_type": "audio/mpeg"}'::JSONB;
 
                                                      QUERY PLAN                                                     
 --------------------------------------------------------------------------------------------------------------------
@@ -1094,9 +1042,9 @@ Query 1 (Worker Poll) performed a sequential scan without indexes for an executi
 Query 2 (Client Poll) performed an index scan for an execution time of 0.145 ms.
 Query 3 (JSONB Containment) performed a sequential scan without indexes for an execution time of 35.349 ms.
 
-From these results we can see how Query 2 was significantly faster than the other two queries, despite all 
-queries using a sequential scan. This was thanks to the B-Tree index that PostgreSQL automatically created on 
-the public_id field from its UNIQUE constraint. 
+From these results we can see how Query 2 was significantly faster than the other two queries. This 
+was thanks to the B-Tree index that PostgreSQL automatically created on the public_id field from 
+its UNIQUE constraint. 
 
 After indexes:
 Query 1 (Worker Poll) performed an index scan for an execution time of 0.116 ms.
@@ -1108,16 +1056,15 @@ index that was created on the status and created_at fields. Despite the GIN inde
 on the payload field, PostgreSQL decided to use a sequential scan for Query 3. In these cases, 
 it turns out to be more performant to use a sequential scan since {"mime_type": "audio/mpeg"} 
 constitutes 80% of the records in the table. It goes to show how PostgreSQL makes decisions 
-on optimizing queries and that indexes may not always be used.
+on optimizing queries, and that created indexes may not always be used if another option is 
+more performant. Query 2 remained the same, using the same existing index on public_id.
 
-Below is the result if the query were to search for {"mime_type": "audio/wav"} instead, 
+Below is the result if Query 3 were to search for {"mime_type": "audio/wav"} instead, 
 which constitutes 20% of the records in the table. In this case, a bitmap heap scan is done 
 and the GIN index is used, which improves on the execution time.
 
 EXPLAIN ANALYZE
-SELECT id, payload->>'original_filename'
-FROM music_jobs
-WHERE payload @> '{"mime_type": "audio/wav"}'::JSONB;
+SELECT id, payload->>'original_filename' FROM music_jobs WHERE payload @> '{"mime_type": "audio/wav"}'::JSONB;
 
                                                                 QUERY PLAN                                                                
 ------------------------------------------------------------------------------------------------------------------------------------------
@@ -1139,24 +1086,25 @@ WHERE payload @> '{"mime_type": "audio/wav"}'::JSONB;
 -- QUESTIONS/ANSWERS --
 
 /* 1. What is a sequential scan and why is it slow at scale?
-A sequential scan in PostgreSQL is one which a table is read row by row from the 
-start to the finish until the matching record is found. It is slow at scale since 
+A sequential scan in PostgreSQL is one which a table is read row by row from  
+start to finish until the matching record is found. It is slow at scale since 
 it is O(n), with the time taking to search a record growing linearly with table 
 size. A lot of unnecessary data may be read before the matching one is found. 
 */
 
 /* 2. Why does the worker poll query need COMPOSITE index and not just an index on status alone?
 A composite index of status alongside created_at is needed since a worker querying 
-or polling for a job will almost always filter by both conditions. For example, 
-when a worker wants to take the oldest pending job, as it should logically be done, 
+or polling for a job will almost always filter by both those conditions. For example, 
+when a worker wants to take the next oldest pending job, as it should logically do, 
 it queries for both the status being 'pending' as well as ordering by created_at in 
 ascending order before limiting it to 1 record. Without the composite index counting 
 created_at, all pending jobs would then have to be scanned one by one for the oldest 
-one, and there may be the case where there are a significant number of pending jobs.
+one, and it may be the case where there are a significant number of pending jobs which 
+would slow down the query.
 */
 
 /* 3. Why GIN and not B-Tree for JSONB columns?
-A GIN index is better suited fro JSONB columns since JSONB is a type that contains 
+A GIN index is better suited for JSONB columns since JSONB is a type that contains 
 many keys and nested values which are searched for more in a "contains" context. 
 These indexes are also better for the array type and full-text search vectors. 
 The B-Tree index is better for values that are scalar or orderable, which JSONB 
@@ -1164,8 +1112,8 @@ typically is not.
 */
 
 /* 4. Which operators USE the GIN index? Which do NOT?
-Some operators which use the GIN index include the containment operation (@>) and 
-the key existence operation (?). Some operators which do not use the GIN index 
+Operators which use the GIN index include the containment operation (@>) and 
+the key existence operation (?). Operators which do not use the GIN index 
 include comparison operators like (>), (<), (BETWEEN) and the text pattern matching 
 operation (LIKE).
 */
@@ -1179,8 +1127,7 @@ Query 3 (JSONB Containment): 35.349 ms (BEFORE), 30.940 ms (AFTER - Average not 
 -- FINAL VERIFICATION --
 
 /*
-SELECT indexname, indexdef FROM pg_indexes
-WHERE tablename = 'music_jobs' ORDER BY indexname;
+SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'music_jobs' ORDER BY indexname;
 \d music_jobs
 
            indexname           |                                             indexdef                                             
