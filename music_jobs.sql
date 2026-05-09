@@ -13,6 +13,8 @@ This initial extra step is used to clear the database so that this file can be r
 and iterated upon with the psql \i music_jobs.sql command.
 ==================================================================================== */
 
+DROP TRIGGER IF EXISTS music_jobs_updated_at ON music_jobs;
+DROP FUNCTION IF EXISTS set_updated_at();
 DROP TABLE IF EXISTS music_jobs;
 
 /* ====================================================================================
@@ -741,4 +743,140 @@ WHERE status = 'done';
 Note that the long processing time is due to the record being created a day before 
 while the table was being incrementally worked on. Typical values would be in the 
 range of seconds or minutes.
+*/
+
+/* ====================================================================================
+STEP 6 - Trigger on updated_at
+==================================================================================== */
+
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER music_jobs_updated_at
+    BEFORE UPDATE ON music_jobs
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- QUESTIONS/ANSWERS --
+
+/* 1. Why BEFORE UPDATE and not AFTER UPDATE?
+Because the music_jobs_updated_at trigger needs to modify the updated_at record before 
+the record is saved to the database, BEFORE UPDATE is more appropriate. Using AFTER 
+UPDATE would not correctly update the record, and we would then require another UPDATE.
+*/
+
+/* 2. What is NEW and what is OLD in a trigger function?
+They are special row variables available in triggers.
+NEW represents the new version of the row in INSERT and UPDATE triggers. 
+OLD represents the previous version of the row in UPDATE and DELETE triggers.
+*/
+
+/* 3. Why does returning NEW matter?
+It matters because PostgreSQL expects a row to be returned in INSERT and UPDATE triggers 
+so that it can save it to the database in those operations. NEW is typically the 
+correct row to return, as opposed to OLD or NULL.
+*/
+
+/* 4. Why is the function reusable across tables?
+The set_updated_at() function is independent from the created trigger, the latter being 
+associated with a particular table. If there was another table, as long as it had an 
+updated_at field, the function could be reused for that table in another trigger.
+*/
+
+-- SAMPLE DATA --
+
+/* Before UPDATE
+SELECT id, payload->>'title' AS title, status, progress, updated_at
+FROM music_jobs
+ORDER BY created_at
+OFFSET 1 LIMIT 1;
+
+                  id                  | title |   status   | progress |          updated_at           
+--------------------------------------+-------+------------+----------+-------------------------------
+ 019e0a23-08fe-733c-b146-c2b411010a5c | Miami | processing |       75 | 2026-05-09 12:46:56.117368-06
+(1 row)
+*/
+
+UPDATE music_jobs
+SET status = 'done', progress = 100, -- updated_at not being changed here
+result = result || jsonb_build_object(
+    'waveform_path', 'uploads/processed/waveform_' || md5(payload->>'title') || '.json'
+)
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
+
+/* After UPDATE
+SELECT id, payload->>'title' AS title, status, progress, updated_at
+FROM music_jobs
+ORDER BY created_at
+OFFSET 1 LIMIT 1;
+
+                  id                  | title | status | progress |          updated_at           
+--------------------------------------+-------+--------+----------+-------------------------------
+ 019e0a23-08fe-733c-b146-c2b411010a5c | Miami | done   |      100 | 2026-05-09 13:36:47.674315-06
+(1 row)
+
+Note how updated_at was changed without being specified in the UPDATE statement. This is due 
+to the trigger.
+*/
+
+UPDATE music_jobs
+SET updated_at = '2000-01-01' -- attempt to sabotage
+WHERE id = (SELECT id FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1);
+
+/* After UPDATE sabotage attempt
+SELECT id, payload->>'title' AS title, status, progress, updated_at
+FROM music_jobs
+ORDER BY created_at
+OFFSET 1 LIMIT 1;
+
+                  id                  | title | status | progress |          updated_at          
+--------------------------------------+-------+--------+----------+------------------------------
+ 019e0a23-08fe-733c-b146-c2b411010a5c | Miami | done   |      100 | 2026-05-09 13:39:16.46505-06
+(1 row)
+
+Note that updated_at did not become 2000-01-01, but still used now() per the trigger set. 
+No other fields for this record was changed, as this was just for demonstrating the trigger.
+*/
+
+/*
+Trigger existence verification
+
+SELECT trigger_name, event_manipulation, action_timing, action_statement
+FROM information_schema.triggers
+WHERE event_object_table = 'music_jobs';
+
+     trigger_name      | event_manipulation | action_timing |         action_statement          
+-----------------------+--------------------+---------------+-----------------------------------
+ music_jobs_updated_at | UPDATE             | BEFORE        | EXECUTE FUNCTION set_updated_at()
+(1 row)
+*/
+
+-- VERIFICATION QUERIES --
+
+/* 1. Show trigger details from information_schema.triggers.
+SELECT trigger_name, event_object_table, event_manipulation, action_timing, action_statement
+FROM information_schema.triggers
+WHERE event_object_table = 'music_jobs';
+
+     trigger_name      | event_object_table | event_manipulation | action_timing |         action_statement          
+-----------------------+--------------------+--------------------+---------------+-----------------------------------
+ music_jobs_updated_at | music_jobs         | UPDATE             | BEFORE        | EXECUTE FUNCTION set_updated_at()
+(1 row)
+
+Note that this is practically the same query as for verifying trigger existence.
+*/
+
+/* 2. Show function details from information_schema.routines
+SELECT routine_name, routine_type, data_type
+FROM information_schema.routines
+WHERE routine_name = 'set_updated_at';
+
+  routine_name  | routine_type | data_type 
+----------------+--------------+-----------
+ set_updated_at | FUNCTION     | trigger
+(1 row)
 */
