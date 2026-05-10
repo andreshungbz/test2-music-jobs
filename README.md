@@ -20,3 +20,11 @@ CREATE role music_user WITH LOGIN PASSWORD 'music_password';
 CREATE DATABASE music_processing;
 ALTER DATABASE music_processing OWNER TO music_user;
 ```
+
+### Running the SQL file
+
+In the project directory and having `psql` logged into the database, run:
+
+```
+\i music_jobs.sql
+```
