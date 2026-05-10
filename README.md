@@ -2,7 +2,7 @@
 
 ## YouTube Demo
 
-{pending}
+https://youtu.be/jItIRLFnYVM
 
 ## PostgreSQL Job Queue - Music Jobs
 
