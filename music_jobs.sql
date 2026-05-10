@@ -8,7 +8,7 @@ May 14, 2026
 
 /* ====================================================================================
 STEP 0 - Reset
-This initial extra step is used to clear the database so that this file can be ran
+This initial extra step is used to clear the database so that this file can be run
 and iterated upon with the \i music_jobs.sql command in psql.
 ==================================================================================== */
 
@@ -42,9 +42,9 @@ security standpoint since with SERIAL, it may be possible to enumerate records.
 */
 
 /* 2. Why uuidv7() specifically over uuidv4()?
-A uuidv7 contains a timestamp component in addition to random bits. This design improves database
+A UUIDv7 contains a timestamp component in addition to random bits. This design improves database
 performance when used alongside a B-Tree index. The result is improved performance at scale, which
-uuidv4 is worse at because it does not contain a timestamp component. 
+UUIDv4 is worse at because it does not contain a timestamp component. 
 */
 
 /* 3. Why JSONB over JSON?
@@ -57,8 +57,8 @@ which in turn is a useful statistic. The music jobs use case works better with J
 
 /* 4. Why TIMESTAMPTZ over TIMESTAMP?
 The TIMESTAMPTZ type stores a timestamp which is converted to UTC, whereas the TIMESTAMP type
-does not contain timezone information. TIMESTAMPTZ is preferred since for the use case of a
-created_at field, timezone-related bugs are avoided. If the database server would be moved to 
+does not contain timezone information. TIMESTAMPTZ is preferred since, for the use case of a
+created_at field, timezone-related bugs are avoided. If the database server were moved to 
 another region or distributed, the TIMESTAMPTZ type ensures that the exact instant that occurred
 globally is recorded.
 */
@@ -159,7 +159,7 @@ FROM music_jobs WHERE payload->>'mime_type' = 'audio/mpeg';
 (2 rows)
 */
 
-/* 4. Find the jobs that has the extra field.
+/* 4. Find the jobs that have the extra field.
 SELECT id, payload->>'original_filename' AS job_filename FROM music_jobs WHERE payload ? 'publisher';
 
                   id                  |    job_filename     
@@ -181,7 +181,7 @@ ALTER TABLE music_jobs
 -- QUESTIONS/ANSWERS --
 
 /* 1. Why does this column use uuidv4() and not uuidv7()?
-As uuidv7 has an embedded timestamp, it can potentially be a security concern if it was
+As UUIDv7 has an embedded timestamp, it can potentially be a security concern if it were
 used for the public_id field. In this case, when a job was created could be used by an 
 attacker to analyze traffic. Determining the average number of jobs being created could be
 useful to a competitor, or even maliciously used in configuring a DDOS attack. Using uuidv4()
@@ -189,8 +189,8 @@ is better for the public_id field since it does not embed a timestamp.
 */
 
 /* 2. What does uuid_extract_timestamp() reveal about uuidv7?
-The PostgreSQL uuid_extract_timestamp() function reveals when the UUID was generated. This is 
-a security concern as discussed in Question 1.
+The PostgreSQL uuid_extract_timestamp() function returns the timestamp when the UUID 
+was generated. This is a security concern as discussed in Question 1.
 */
 
 /* 3. Why does the UNIQUE constraint make CREATE INDEX unnecessary?
@@ -199,10 +199,10 @@ index for it. The same occurs for primary keys and EXCLUSION constraints.
 */
 
 /* 4. What is the two-ID pattern and why does it matter?
-The two-ID pattern involves using two different identifiers for one record. Usually, one
-is internal and the other is public. It matters because it allows us to take advantage of
-both the better indexing performance offered by an id that can be ordered like uuidv7, and 
-the obfuscation of metadata offered by another id that is truly random like uuidv4. 
+The two-ID pattern involves using two distinct identifiers for a single record. Usually, one
+is internal, and the other is public. It matters because it allows us to take advantage of
+both the better indexing performance offered by an ID that can be ordered like UUIDv7, and 
+the obfuscation of metadata offered by another ID that is truly random like UUIDv4. 
 */
 
 -- VERIFICATION QUERIES --
@@ -218,7 +218,7 @@ SELECT id, public_id FROM music_jobs;
 (3 rows)
 
 From the results, one can notice how in the id field, which is using uuidv7, the first
-part is the exact same. This corresponds to the timestamp that is embedded. There is no 
+part is the exact same. This corresponds to the embedded timestamp. There is no 
 common or similar pattern seen in the public_id field.
 */
 
@@ -232,7 +232,7 @@ SELECT uuid_extract_timestamp(id) AS id_timestamp, uuid_extract_timestamp(public
  2026-05-08 18:28:49.768-06 | [null]
 (3 rows)
 
-This proves that uuidv7 has a timestamp component and that uuidv4 does not.
+This proves that UUIDv7 has a timestamp component, whereas UUIDv4 does not.
 */
 
 /* 3. Show what the Go server would return to the client after insert.
@@ -244,8 +244,8 @@ content-length: 56
     "job_id": "d43440f1-da73-412f-960b-017b25c79928"
 }
 
-After insert, the server would return a JSON response with the job_id, which is the 
-public_id field internally. The client would use this id to poll the status of the job. 
+After the insert, the server would return a JSON response with the job_id, which is the 
+public_id field internally. The client would use this ID to check the job's status. 
 Most notable is the 202 HTTP status code, which means the request was received and 
 accepted for processing, but the processing has not yet been completed.
 */
@@ -281,7 +281,7 @@ ALTER TABLE music_jobs
 /* 1. Why are status and progress real columns, not inside payload JSONB?
 The status and progress fields are real columns because these fields will be queried 
 more often, and it is faster when they are columns and not inside the payload JSONB. 
-These fields also concern more the job record itself, rather than as part of the metadata
+These fields also concern the job record itself, rather than as part of the metadata
 for a music file.
 */
 
@@ -390,7 +390,7 @@ SELECT id FROM music_jobs WHERE status = 'pending' ORDER BY created_at LIMIT 1;
  019e0a23-0ce8-79e0-a6dd-04d71902f005
 (1 row)
 
-Note that this is the third oldest job which is still pending. See Query 3.
+Note that this is the third-oldest job, which is still pending. See Query 3.
 */
 
 /* 3. Show all jobs with their current states
@@ -403,7 +403,7 @@ SELECT id, payload->>'title' AS title, status, progress, created_at FROM music_j
  019e0a23-0ce8-79e0-a6dd-04d71902f005 | Buruboun Garada | pending    |        0 | 2026-05-08 18:28:49.768337-06
 (3 rows)
 
-Note that additional fields are shown and the result was ordered to more clearly show 
+Note that additional fields are shown, and the result was ordered to more clearly show 
 the results of the UPDATE queries from before.
 */
 
@@ -420,12 +420,12 @@ ALTER TABLE music_jobs
 /* 1. Why does the result default to '{}' and not NULL?
 Using an empty object '{}' is preferable to NULL since it keeps a consistent JSON structure 
 where JSON operations can be safely performed without NULL checks. It can be logically 
-interpreted as having no result data yet, rather than unknown as NULL could imply.
+interpreted as having no result data yet, rather than unknown, as NULL could imply.
 */
 
 /* 2. Why is error_msg TEXT and not inside the result JSONB?
 Likewise with the status and progress fields, the error_msg field is part of the job 
-lifecycle and does not particularly relate to metadata of a music file or its result. 
+lifecycle and does not particularly relate to the metadata of a music file or its result. 
 Using the TEXT type provides a simple and consistent structure for error messages.
 */
 
@@ -438,7 +438,7 @@ value is overwritten.
 
 /* 4. Why does each stage read from the original file, not the previous stage's output?
 Of the four stages: normalize, trim silence, convert, and waveform, the original file 
-is read instead of using the previous stage's output so that the result of one stage 
+is read instead of using the previous stage's output, so that the result of one stage 
 is not reflected in another stage. Having the stages be independent has the advantage 
 of being able to be processed in parallel. Additionally, errors or artifacts aren't carried 
 over across stages. For example, adjusting the volume in the normalize stage would 
@@ -549,7 +549,7 @@ content-length: 439
     }
 }
 
-Note that in this case, the result property is included, which shows other properties with paths.
+Note that, in this case, the result property includes other properties with paths.
 */
 
 -- Update second oldest job for Query 2 (OFFSET 1)
@@ -574,7 +574,7 @@ content-length: 439
 }
 
 Note that in this case, it is assumed that each stage is an independent component 
-of the result which the client can already access, despite the overall status 
+of the result that the client can already access, despite the overall status 
 being processing.
 */
 
@@ -609,14 +609,14 @@ ALTER TABLE music_jobs
 /* 1. Why is created_at not enough?
 If one wanted to calculate how long a job took from when it began processing until it 
 was done, a field in addition to created_at is needed. This is the reason for adding an 
-updated_at field. It is also useful for knowing whether a worker might've crashed. The 
+updated_at field. It is also useful for knowing whether a worker might have crashed. The 
 created_at field only tells when the job was submitted.
 */
 
 /* 2. What goes wrong if application code maintains updated_at?
 If the application code maintains the updated_at field, then there is a possibility that 
 it may forget to set it when making an UPDATE to a record. The record is then left in an 
-inconsistent state which may lead to bugs.
+inconsistent state, which may lead to bugs.
 */
 
 /* 3. Write a query that would power an SSE health check endpoint.
@@ -656,7 +656,7 @@ FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1;
  019e0a23-08fe-733c-b146-c2b411010a5c | Miami | processing |       50 | 2026-05-09 12:32:40.777033-06
 (1 row)
 
-Note how the updated_at field is the same from the previous UPDATE.
+Note that the updated_at field matches the previous UPDATE.
 */
 
 UPDATE music_jobs
@@ -679,7 +679,7 @@ Note how the updated_at field has now been changed to reflect when progress was 
 */
 
 /*
-Updating the updated_at field in this manner is fragile because we as programmers may forget 
+Updating the updated_at field in this manner is fragile because we, as programmers, may forget 
 to maintain the field in the application code with our constructed queries.
 */
 
@@ -695,7 +695,7 @@ FROM music_jobs WHERE updated_at > now() - INTERVAL '60 seconds' ORDER BY update
  019e0a23-0ce8-79e0-a6dd-04d71902f005 | Buruboun Garada | failed     |        0 | 2026-05-09 12:46:45.70571-06
 (2 rows)
 
-Note that some previous queries were rerun with updated_at changed.
+Note that some previous queries were rerun with updated_at set to a different value.
 */
 
 /* 2. Find jobs stuck in processing for more than 5 minutes.
@@ -707,7 +707,7 @@ FROM music_jobs WHERE status = 'processing' AND updated_at < now() - INTERVAL '5
  019e0a23-08fe-733c-b146-c2b411010a5c | Miami | processing |       75 | 2026-05-08 18:28:48.76592-06 | 2026-05-09 12:46:56.117368-06
 (1 row)
 
-Note that 5 minutes minimum had passed when recording the results of this query.
+Note that at least 5 minutes had passed when recording the results of this query.
 */
 
 /* 3. How long did each completed job take?
@@ -719,7 +719,7 @@ FROM music_jobs WHERE status = 'done';
  019e0a23-050b-7cd0-9091-c81ce85f694c | Hiruga | done   |      100 | 18:03:53.029848
 (1 row)
 
-Note that the long processing time is due to the record being created a day before 
+Note that the long processing time is due to the record being created a day before, 
 while the table was being incrementally worked on. Typical values should be in the 
 range of seconds or minutes.
 */
@@ -751,7 +751,7 @@ UPDATE would not correctly update the record, and we would then require another 
 /* 2. What is NEW and what is OLD in a trigger function?
 NEW and OLD are special row variables that are available in triggers.
 NEW represents the new version of the row in INSERT and UPDATE triggers. 
-OLD represents the previous version of the row in UPDATE and DELETE triggers.
+OLD represents the previous row version in UPDATE and DELETE triggers.
 */
 
 /* 3. Why does returning NEW matter?
@@ -761,7 +761,7 @@ correct row to return, as opposed to OLD or NULL.
 */
 
 /* 4. Why is the function reusable across tables?
-The set_updated_at() function is independent from the created trigger, the latter being 
+The set_updated_at() function is independent of the created trigger, the latter being 
 associated with a particular table. If there was another table, as long as it had an 
 updated_at field, the function could be reused for that table in another trigger.
 */
@@ -812,8 +812,8 @@ FROM music_jobs ORDER BY created_at OFFSET 1 LIMIT 1;
  019e0a23-08fe-733c-b146-c2b411010a5c | Miami | done   |      100 | 2026-05-09 13:39:16.46505-06
 (1 row)
 
-Note that updated_at did not become 2000-01-01, but still used now() per the trigger. 
-No other fields for this record was changed, as this was just for demonstrating the trigger.
+Note that updated_at did not become 2000-01-01. It is still set to now() per the trigger. 
+No other fields for this record were changed, as this was just for demonstrating the trigger.
 */
 
 /* Trigger existence verification
@@ -1042,16 +1042,16 @@ Query 1 (Worker Poll) performed a sequential scan without indexes for an executi
 Query 2 (Client Poll) performed an index scan for an execution time of 0.145 ms.
 Query 3 (JSONB Containment) performed a sequential scan without indexes for an execution time of 35.349 ms.
 
-From these results we can see how Query 2 was significantly faster than the other two queries. This 
+From these results, we can see how Query 2 was significantly faster than the other two queries. This 
 was thanks to the B-Tree index that PostgreSQL automatically created on the public_id field from 
 its UNIQUE constraint. 
 
 After indexes:
 Query 1 (Worker Poll) performed an index scan for an execution time of 0.116 ms.
-Query 2 (Client Poll) performed an index scan like before for an execution time of 0.092 ms.
-Query 3 (JSONB Containment) performed a sequential scan like before for an execution time of 30.940 ms.
+Query 2 (Client Poll) performed an index scan, as before, with an execution time of 0.092 ms.
+Query 3 (JSONB Containment) performed a sequential scan, as before, with an execution time of 30.940 ms.
 
-From these results we can see how Query 1's execution time improved thanks to the composite 
+From these results, we can see how Query 1's execution time improved thanks to the composite 
 index that was created on the status and created_at fields. Despite the GIN index being created 
 on the payload field, PostgreSQL decided to use a sequential scan for Query 3. In these cases, 
 it turns out to be more performant to use a sequential scan since {"mime_type": "audio/mpeg"} 
@@ -1060,8 +1060,8 @@ on optimizing queries, and that created indexes may not always be used if anothe
 more performant. Query 2 remained the same, using the same existing index on public_id.
 
 Below is the result if Query 3 were to search for {"mime_type": "audio/wav"} instead, 
-which constitutes 20% of the records in the table. In this case, a bitmap heap scan is done 
-and the GIN index is used, which improves on the execution time.
+which constitutes 20% of the records in the table. In this case, a bitmap heap scan is done, 
+and the GIN index is used, which improves the execution time.
 
 EXPLAIN ANALYZE
 SELECT id, payload->>'original_filename' FROM music_jobs WHERE payload @> '{"mime_type": "audio/wav"}'::JSONB;
@@ -1086,9 +1086,9 @@ SELECT id, payload->>'original_filename' FROM music_jobs WHERE payload @> '{"mim
 -- QUESTIONS/ANSWERS --
 
 /* 1. What is a sequential scan and why is it slow at scale?
-A sequential scan in PostgreSQL is one which a table is read row by row from  
+A sequential scan in PostgreSQL is one in which a table is read row by row from  
 start to finish until the matching record is found. It is slow at scale since 
-it is O(n), with the time taking to search a record growing linearly with table 
+it is O(n), with the time taken to search a record growing linearly with table 
 size. A lot of unnecessary data may be read before the matching one is found. 
 */
 
@@ -1099,22 +1099,22 @@ when a worker wants to take the next oldest pending job, as it should logically 
 it queries for both the status being 'pending' as well as ordering by created_at in 
 ascending order before limiting it to 1 record. Without the composite index counting 
 created_at, all pending jobs would then have to be scanned one by one for the oldest 
-one, and it may be the case where there are a significant number of pending jobs which 
+one, and it may be the case that there are a significant number of pending jobs, which 
 would slow down the query.
 */
 
 /* 3. Why GIN and not B-Tree for JSONB columns?
 A GIN index is better suited for JSONB columns since JSONB is a type that contains 
-many keys and nested values which are searched for more in a "contains" context. 
+many keys and nested values, which are searched for more in a "contains" context. 
 These indexes are also better for the array type and full-text search vectors. 
 The B-Tree index is better for values that are scalar or orderable, which JSONB 
 typically is not.
 */
 
 /* 4. Which operators USE the GIN index? Which do NOT?
-Operators which use the GIN index include the containment operation (@>) and 
-the key existence operation (?). Operators which do not use the GIN index 
-include comparison operators like (>), (<), (BETWEEN) and the text pattern matching 
+Operators that use the GIN index include the containment operation (@>) and 
+the key existence operation (?). Operators that do not use the GIN index 
+include comparison operators like (>), (<), (BETWEEN), and the text pattern matching 
 operation (LIKE).
 */
 
